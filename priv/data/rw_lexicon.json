@@ -1,0 +1,57 @@
+{
+  "$schema": "./lexicon.schema.json",
+  "version": "0.1.0",
+  "locale": "rw",
+  "updated": "2026-02-14",
+  "notice": "PLACEHOLDER DATA -- THIS IS NOT A REAL HATE-SPEECH LIST. Every entry below is a synthetic token that carries no meaning; they only exist so the engine, the tests and the tooling can be exercised end to end. Replace this file with a real, human-reviewed Kinyarwanda lexicon before relying on this library in production.",
+  "normalization": {
+    "fold_l_r": true,
+    "strip_diacritics": true,
+    "collapse_repeats": true,
+    "strip_prefixes": true
+  },
+  "categories": [
+    {
+      "id": "demo_insult",
+      "label": "Placeholder: insults",
+      "description": "Stand-in for general insults and derogatory name-calling.",
+      "severity": "low",
+      "action": "flag",
+      "terms": ["demoinsult"]
+    },
+    {
+      "id": "demo_harassment",
+      "label": "Placeholder: harassment",
+      "description": "Stand-in for targeted harassment, including multi-word phrases.",
+      "severity": "medium",
+      "action": "review",
+      "terms": ["demoharass"],
+      "phrases": ["demoharass demofollow"]
+    },
+    {
+      "id": "demo_explicit",
+      "label": "Placeholder: explicit content",
+      "description": "Stand-in for sexual or otherwise explicit content.",
+      "severity": "medium",
+      "action": "review",
+      "terms": ["demoexplicit"]
+    },
+    {
+      "id": "demo_violence",
+      "label": "Placeholder: violence",
+      "description": "Stand-in for threats of violence and incitement.",
+      "severity": "high",
+      "action": "reject",
+      "terms": ["demoviolence"],
+      "phrases": ["demoviolence demothreat"]
+    },
+    {
+      "id": "demo_identity_hate",
+      "label": "Placeholder: identity hate",
+      "description": "Stand-in for slurs targeting an ethnicity, region, religion or other protected group.",
+      "severity": "high",
+      "action": "reject",
+      "terms": ["demohate", "demoslur"]
+    }
+  ]
+}

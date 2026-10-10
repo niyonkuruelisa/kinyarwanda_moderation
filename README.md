@@ -1,0 +1,272 @@
+# KinyarwandaModeration
+
+**Open-source Kinyarwanda content moderation, profanity filtering and hate-speech
+detection for Elixir and Phoenix.**
+
+[![Hex.pm](https://img.shields.io/badge/hex-not%20published-informational)](https://github.com/niyonkuruelisa/kinyarwanda_moderation)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Elixir](https://img.shields.io/badge/elixir-%7E%3E%201.18-4B275F)](https://elixir-lang.org)
+
+Generic profanity filters are written for English and quietly fail on
+Kinyarwanda. This library is built the other way around: the normalization
+pipeline, the lexicon format and the matcher are all shaped by how Kinyarwanda
+is actually written online. It has **zero runtime dependencies**.
+
+```elixir
+KinyarwandaModeration.toxic?("some text")
+#=> true | false
+
+KinyarwandaModeration.check("some text")
+#=> %KinyarwandaModeration.Result{
+#     action: :review,
+#     severity: :medium,
+#     matches: [%KinyarwandaModeration.Match{term: "...", category_id: "..."}]
+#   }
+```
+
+`toxic?/2` answers a yes/no question. `check/2` returns the full verdict: every
+match, the category it belongs to, byte offsets back into the original string,
+and a suggested action (`:allow`, `:flag`, `:review`, `:reject`). **Nothing ever
+raises on toxic input** - moderation is a decision about content, not a
+validation failure.
+
+---
+
+## Why not just a word list?
+
+This is the part most multi-language filters get wrong. Kinyarwanda is
+agglutinative and inconsistently spelled online, so exact substring matching
+misses most real-world cases. Four normalizations run on **both** the lexicon and
+the incoming text, which is what keeps the two sides symmetric:
+
+| Rule | What it fixes | Example |
+| --- | --- | --- |
+| **l / r folding** | Kinyarwanda has no native *l* in most positions, so writers swap *l* and *r* freely | `igicucu` and `igiculu` normalize to the same token |
+| **Diacritic folding** | The orthography is unaccented but users type `é`, `á`, `è` anyway | `é` → `e` |
+| **Repeat collapsing** | Letter padding is a common evasion trick | `amaaani` → `amani` |
+| **Noun-class prefix stripping** | Nouns inflect heavily by prefix (`umu-`, `aba-`, `iki-`, `ibi-`, ...) | `abadeputa` also matches a lexicon entry for `deputa` |
+
+Every rule is individually switchable - globally, or per-lexicon through the
+`"normalization"` object in the data file.
+
+Matching is [Aho-Corasick](https://en.wikipedia.org/wiki/Aho%E2%80%93Corasick_algorithm)
+over **token sequences**, so a phrase never matches across a word boundary and
+scanning stays linear in the length of the text as the lexicon grows. The
+compiled automaton lives in `:persistent_term`, making reads lock-free on the
+LiveView hot path.
+
+```mermaid
+graph LR
+  A[Raw text] --> B[Normalizer]
+  B --> C[Tokens]
+  C --> D[Aho-Corasick matcher]
+  E[JSON lexicon] --> F[Normalizer] --> G[Token sequences] --> D
+  D --> H["%Result{action, severity, matches}"]
+```
+
+---
+
+## Installation
+
+```elixir
+def deps do
+  [
+    {:kinyarwanda_moderation,
+     git: "https://github.com/niyonkuruelisa/kinyarwanda_moderation.git", tag: "v0.1.0"}
+  ]
+end
+```
+
+Then `mix deps.get`. The OTP application installs the bundled lexicon at boot,
+so there is nothing else to wire up.
+
+To pin a mutable branch instead of a tag, use `branch: "main"` - but a tag makes
+builds reproducible, and the whole point of keeping the lexicon in its own
+repository is that you can bump one line in `mix.exs` to pick up new words.
+
+---
+
+## Usage
+
+### Detect
+
+```elixir
+iex> KinyarwandaModeration.toxic?("just a normal sentence")
+false
+
+iex> KinyarwandaModeration.toxic?("")
+false
+```
+
+### Inspect the verdict
+
+```elixir
+result = KinyarwandaModeration.check(user_input)
+
+result.action           # :allow | :flag | :review | :reject
+result.severity         # :low | :medium | :high | nil
+result.matches          # [%KinyarwandaModeration.Match{}, ...]
+result.lexicon_version  # "0.1.0" - record this to audit a decision later
+
+KinyarwandaModeration.Result.category_ids(result)
+```
+
+### Redact for display
+
+```elixir
+result = KinyarwandaModeration.check(user_input, redact?: true)
+result.redacted
+#=> "well, [...] you"
+```
+
+### In an Ecto changeset
+
+Moderation usually should not surface as a validation error to the user. Set a
+status and let a moderator deal with it:
+
+```elixir
+defmodule MyApp.Posts.Post do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "posts" do
+    field :body, :string
+    field :status, :string, default: "published"
+  end
+
+  def changeset(post, attrs) do
+    post
+    |> cast(attrs, [:body])
+    |> validate_required([:body])
+    |> moderate_body()
+  end
+
+  defp moderate_body(changeset) do
+    case get_change(changeset, :body) do
+      nil ->
+        changeset
+
+      body ->
+        case KinyarwandaModeration.check(body) do
+          %{action: :allow} -> changeset
+          %{action: :flag} -> put_change(changeset, :status, "published")
+          %{action: :reject} -> put_change(changeset, :status, "rejected")
+          %{action: :review} -> put_change(changeset, :status, "pending_review")
+        end
+    end
+  end
+end
+```
+
+### In a LiveView
+
+Checking is pure and fast enough to run on every keystroke or message:
+
+```elixir
+def handle_event("send", %{"message" => body}, socket) do
+  case KinyarwandaModeration.check(body) do
+    %{action: :allow} -> {:noreply, stream(socket, :messages, [body])}
+    %{action: action} -> {:noreply, assign(socket, :moderation, action)}
+  end
+end
+```
+
+---
+
+## The lexicon is data, not code
+
+Word lists change constantly, and reviewing them is a community job rather than a
+coding job. So the lexicon is plain JSON, validated against
+[`priv/data/lexicon.schema.json`](priv/data/lexicon.schema.json):
+
+```json
+{
+  "version": "0.1.0",
+  "locale": "rw",
+  "normalization": { "fold_l_r": true, "strip_prefixes": true },
+  "categories": [
+    {
+      "id": "insult",
+      "label": "Insults",
+      "severity": "low",
+      "action": "flag",
+      "terms": ["someword"],
+      "phrases": ["some two word phrase"]
+    }
+  ]
+}
+```
+
+Add a word: edit the JSON, bump `version`, open a pull request. No Elixir
+required. If you only want a flat list of words, a plain
+`["word", "another"]` array is also accepted - see
+[`priv/data/rw_hate_speech.json`](priv/data/rw_hate_speech.json).
+
+> [!IMPORTANT]
+> The bundled `priv/data/rw_lexicon.json` ships with **placeholder** entries only.
+> It is a working example of the format, not a hate-speech list. Read the
+> `"notice"` field inside it before using this library for anything real.
+
+### Bring your own lexicon
+
+```elixir
+# config/config.exs
+config :kinyarwanda_moderation, lexicon: "/etc/moderation/rw_lexicon.json"
+```
+
+A missing or invalid configured lexicon is logged and the bundled default is used
+instead, so bad config never takes your application down. Swap the file and call
+`KinyarwandaModeration.reload/1` to pick up the change without a restart - or at
+boot for a zero-downtime data update:
+
+```elixir
+{:ok, matcher} = KinyarwandaModeration.reload("/etc/moderation/rw_lexicon.json")
+```
+
+Operators can also tune the pipeline per call, which matters for short fields
+like display names where precision beats recall:
+
+```elixir
+KinyarwandaModeration.check(name, strip_prefixes: false)
+```
+
+---
+
+## API
+
+| Function | Purpose |
+| --- | --- |
+| `KinyarwandaModeration.toxic?/2` | Boolean check |
+| `KinyarwandaModeration.check/2` | Full verdict with matches and offsets |
+| `KinyarwandaModeration.reload/2` | Load and install a lexicon at runtime |
+| `KinyarwandaModeration.compile/2` | Install an in-memory lexicon map |
+| `KinyarwandaModeration.normalize/2` | See exactly what the matcher saw |
+| `KinyarwandaModeration.lexicon_version/0` | Version of the installed lexicon |
+| `KinyarwandaModeration.lexicon_sources/0` | Paths a lexicon can be loaded from |
+
+Full documentation is in the module docs; run `mix docs` to build them locally.
+
+---
+
+## Contributing
+
+The most valuable contribution is **lexicon data**, and it does not require
+writing Elixir.
+
+1. Edit `priv/data/rw_lexicon.json` (validated by `priv/data/lexicon.schema.json`).
+2. Bump `version` and `updated`.
+3. Add tests to `test/` for any new normalization behaviour.
+4. Run `mix precommit` and open a pull request.
+
+Please open an issue before adding large batches of terms so the grouping and
+severity levels can be discussed first.
+
+## License
+
+MIT - see [LICENSE](LICENSE).
+
+## Keywords
+
+`kinyarwanda` · `content-moderation` · `profanity-filter` ·
+`hate-speech-detection` · `elixir` · `phoenix-framework` · `bad-words` ·
+`text-sanitization` · `african-languages` · `nlp`

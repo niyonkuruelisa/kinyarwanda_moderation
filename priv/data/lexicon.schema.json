@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/niyonkuruelisa/kinyarwanda_moderation/priv/data/lexicon.schema.json",
+  "title": "Kinyarwanda moderation lexicon",
+  "description": "Schema for the JSON files this library loads. Two shapes are accepted: the structured form used by priv/data/rw_lexicon.json (categories with severities and actions), and a flat array of terms such as priv/data/rw_hate_speech.json. Contributors add words here; the library loads and compiles them at runtime.",
+  "oneOf": [
+    { "$ref": "#/definitions/structured" },
+    { "$ref": "#/definitions/flat" }
+  ],
+  "definitions": {
+    "flat": {
+      "type": "array",
+      "minItems": 1,
+      "description": "A flat list of single-token entries. The library loads it as one 'flat_terms' category with severity 'medium' and action 'flag', and reports version '0.0.0'. Use the structured form when you need per-category severities, actions or multi-word phrases.",
+      "items": {
+        "type": "string",
+        "minLength": 2
+      }
+    },
+    "structured": {
+      "type": "object",
+      "required": ["version", "locale", "categories"],
+      "additionalProperties": false,
+      "properties": {
+        "$schema": { "type": "string" },
+        "version": {
+          "type": "string",
+          "description": "Lexicon version. Bump when words are added or removed.",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "locale": {
+          "type": "string",
+          "description": "BCP-47 style locale tag for the language this lexicon covers.",
+          "examples": ["rw"]
+        },
+        "updated": {
+          "type": "string",
+          "description": "ISO-8601 date of the last edit.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "notice": {
+          "type": "string",
+          "description": "Free-form note shown to maintainers."
+        },
+        "normalization": {
+          "type": "object",
+          "description": "Per-lexicon overrides for the default normalization pipeline.",
+          "additionalProperties": false,
+          "properties": {
+            "fold_l_r": {
+              "type": "boolean",
+              "description": "Treat 'l' and 'r' as the same letter, a very common Kinyarwanda spelling variation."
+            },
+            "strip_diacritics": {
+              "type": "boolean",
+              "description": "Fold accented characters onto their base form."
+            },
+            "collapse_repeats": {
+              "type": "boolean",
+              "description": "Collapse runs of three or more identical letters down to one."
+            },
+            "strip_prefixes": {
+              "type": "boolean",
+              "description": "Match noun-class prefixes (umu-, aba-, iki-, ...) so inflected forms still hit. Increases false positives."
+            }
+          }
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Groupings of terms that share a severity and a suggested action.",
+          "items": {
+            "type": "object",
+            "required": ["id", "severity", "action"],
+            "additionalProperties": false,
+            "anyOf": [{ "required": ["terms"] }, { "required": ["phrases"] }],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable machine-readable identifier.",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "label": {
+                "type": "string",
+                "description": "Human-readable name."
+              },
+              "severity": {
+                "type": "string",
+                "description": "How serious a match is.",
+                "enum": ["low", "medium", "high"]
+              },
+              "action": {
+                "type": "string",
+                "description": "Suggested handling: allow, flag for later, queue for review, or block.",
+                "enum": ["allow", "flag", "review", "reject"]
+              },
+              "description": {
+                "type": "string",
+                "description": "Why these terms are grouped together."
+              },
+              "terms": {
+                "type": "array",
+                "description": "Single-token entries.",
+                "items": { "type": "string", "minLength": 2 }
+              },
+              "phrases": {
+                "type": "array",
+                "description": "Multi-word entries, matched as consecutive tokens.",
+                "items": { "type": "string", "minLength": 3 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
