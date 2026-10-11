@@ -36,15 +36,18 @@ validation failure.
 
 This is the part most multi-language filters get wrong. Kinyarwanda is
 agglutinative and inconsistently spelled online, so exact substring matching
-misses most real-world cases. Four normalizations run on **both** the lexicon and
+misses most real-world cases. Seven rules run on **both** the lexicon and
 the incoming text, which is what keeps the two sides symmetric:
 
 | Rule | What it fixes | Example |
 | --- | --- | --- |
-| **l / r folding** | Kinyarwanda has no native *l* in most positions, so writers swap *l* and *r* freely | `igicucu` and `igiculu` normalize to the same token |
+| **l / r folding** | Kinyarwanda has no native *l* in most positions, so writers swap *l* and *r* freely | `igiculu` and `igicuru` normalize to the same token |
 | **Diacritic folding** | The orthography is unaccented but users type `é`, `á`, `è` anyway | `é` → `e` |
-| **Repeat collapsing** | Letter padding is a common evasion trick | `amaaani` → `amani` |
+| **Double squashing** | A single doubled letter is the cheapest padding trick, and it slips past a rule that only looks for runs of three | `igiituba`, `igituuba`, `igitubba` all match a listed `igituba` |
+| **Repeat collapsing** | Longer letter padding is a common evasion trick | `amaaani` → `amani` |
 | **Noun-class prefix stripping** | Nouns inflect heavily by prefix (`umu-`, `aba-`, `iki-`, `ibi-`, ...) | `abadeputa` also matches a lexicon entry for `deputa` |
+| **Augment dropping** | A locative or verb swallows the initial vowel of the noun it governs | `kugituba` matches a listed `igituba` |
+| **Phrase gluing** | Writers run multi-word phrases together | `kanywenzobya` matches a listed `kanywe nzobya` |
 
 Every rule is individually switchable - globally, or per-lexicon through the
 `"normalization"` object in the data file.
@@ -54,6 +57,27 @@ over **token sequences**, so a phrase never matches across a word boundary and
 scanning stays linear in the length of the text as the lexicon grows. The
 compiled automaton lives in `:persistent_term`, making reads lock-free on the
 LiveView hot path.
+
+### Where a listed word matches
+
+There is no `contains`, `startswith` or `endswith` option, and none is needed:
+every listed word already behaves like all three at once. Both sides are
+expanded before they are compared, so a prefix the writer adds behaves like a
+prefix on the listed word, and the listed word behaves like a stem.
+
+| The writer typed | The lexicon lists | Matches? | Why |
+| --- | --- | --- | --- |
+| `igituba` | `igituba` | yes | exact token |
+| `igituba` | `tuba` | yes | the listed word stems to `tuba` |
+| `kugituba` | `igituba` | yes | augment dropping meets prefix stripping |
+| `kanywenzobya` | `kanywe nzobya` | yes | phrase gluing |
+| `uyumucumita` | `cumita` | **no** | the word is buried mid-token |
+| `nywe nzobya` | `kanywe nzobya` | no | the leading token is missing |
+
+The one shape the engine cannot see is a word glued into the **middle** of a
+longer token (`cumita` inside `uyumucumita`), because the automaton walks tokens,
+not characters. Listing the full inflected spelling, or adding the
+augment-dropped stem as its own entry, is the supported way to catch those.
 
 ```mermaid
 graph LR
@@ -177,13 +201,13 @@ end
 
 Word lists change constantly, and reviewing them is a community job rather than a
 coding job. So the lexicon is plain JSON, validated against
-[`priv/data/lexicon.schema.json`](priv/data/lexicon.schema.json):
+[`data/lexicon.schema.json`](data/lexicon.schema.json):
 
 ```json
 {
   "version": "0.1.0",
   "locale": "rw",
-  "normalization": { "fold_l_r": true, "strip_prefixes": true },
+  "normalization": { "fold_l_r": true, "squash_doubles": true, "augment_drop": true },
   "categories": [
     {
       "id": "insult",
@@ -200,10 +224,10 @@ coding job. So the lexicon is plain JSON, validated against
 Add a word: edit the JSON, bump `version`, open a pull request. No Elixir
 required. If you only want a flat list of words, a plain
 `["word", "another"]` array is also accepted - see
-[`priv/data/rw_hate_speech.json`](priv/data/rw_hate_speech.json).
+[`data/rw_hate_speech.json`](data/rw_hate_speech.json).
 
 > [!IMPORTANT]
-> The bundled `priv/data/rw_lexicon.json` ships with **placeholder** entries only.
+> The bundled `data/rw_lexicon.json` ships with **placeholder** entries only.
 > It is a working example of the format, not a hate-speech list. Read the
 > `"notice"` field inside it before using this library for anything real.
 
@@ -253,7 +277,7 @@ Full documentation is in the module docs; run `mix docs` to build them locally.
 The most valuable contribution is **lexicon data**, and it does not require
 writing Elixir.
 
-1. Edit `priv/data/rw_lexicon.json` (validated by `priv/data/lexicon.schema.json`).
+1. Edit `data/rw_lexicon.json` (validated by `data/lexicon.schema.json`).
 2. Bump `version` and `updated`.
 3. Add tests to `test/` for any new normalization behaviour.
 4. Run `mix precommit` and open a pull request.

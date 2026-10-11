@@ -6,7 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **Breaking:** the bundled lexicon data moved from `priv/data/` to a top-level
+  `data/`. Mix only mirrors `priv/` into the build output, so `data/` is resolved
+  at runtime. `KinyarwandaModeration.Lexicon.default_path/1` now walks a
+  candidate list, and `default_path_candidates/1` exposes it for diagnostics.
+- The normalization pipeline reorders l/r folding ahead of the squash rules, so
+  `KinyarwandaModeration.Normalizer.normalize/1` is idempotent.
+
+### Added
+
+- The doubled-letter, augment-drop and phrase-gluing rules are now declared in
+  `data/lexicon.schema.json`, and the normalizer documents all seven rules.
 
 ## [0.1.0] - 2026-02-14
 
@@ -20,8 +32,8 @@ Nothing yet.
 - `KinyarwandaModeration.Matcher`, a dependency-free Aho-Corasick automaton over
   token sequences, stored in `:persistent_term` for lock-free reads.
 - `KinyarwandaModeration.Lexicon`, a JSON loader and validator driven by
-  `priv/data/lexicon.schema.json`, plus the placeholder `priv/data/rw_lexicon.json`.
-- A flat `priv/data/rw_hate_speech.json` sample in the simple `["word", ...]` shape.
+  `data/lexicon.schema.json`, plus the placeholder `data/rw_lexicon.json`.
+- A flat `data/rw_hate_speech.json` sample in the simple `["word", ...]` shape.
 - Redaction support via the `:redact?` and `:replacement` options.
 - OTP application that installs the bundled lexicon at boot, falling back to the
   bundled default when a configured lexicon is missing or invalid.

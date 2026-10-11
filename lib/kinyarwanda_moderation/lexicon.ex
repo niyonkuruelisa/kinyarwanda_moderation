@@ -4,7 +4,7 @@ defmodule KinyarwandaModeration.Lexicon do
 
   A lexicon maps terms and phrases to the category they belong to, and every
   category carries a `severity` and a suggested `action`. The on-disk shape is
-  documented by `priv/data/lexicon.schema.json`.
+  documented by `data/lexicon.schema.json`.
 
   ## Loading
 
@@ -14,11 +14,11 @@ defmodule KinyarwandaModeration.Lexicon do
     * a path to a directory, in which case the bundled `rw_lexicon.json` is
       looked up inside it,
     * `:default` (or no argument), which resolves to the lexicon shipped in this
-      package's `priv/data`.
+      package's `data` directory.
 
   Both on-disk shapes are accepted: the structured object exemplified by
-  `priv/data/rw_lexicon.json`, and a flat JSON array of terms such as
-  `priv/data/rw_hate_speech.json`. A flat array becomes a single
+  `data/rw_lexicon.json`, and a flat JSON array of terms such as
+  `data/rw_hate_speech.json`. A flat array becomes a single
   `"flat_terms"` category, since it carries no per-term metadata.
 
   Terms are normalized with the pipeline the lexicon itself declares, so the
@@ -30,6 +30,12 @@ defmodule KinyarwandaModeration.Lexicon do
   alias KinyarwandaModeration.Normalizer
 
   @default_file "rw_lexicon.json"
+  @data_dir "data"
+
+  # Captured at compile time: the project root of the source checkout. This is
+  # what makes `data/` resolvable when the library is consumed as a Mix
+  # dependency, because deps keep their source tree on disk.
+  @source_root Path.expand("../..", __DIR__)
 
   # Defaults applied to the flat `["term", ...]` form, which has nowhere to
   # declare them. Deliberately the middle of the road: flag rather than reject,
@@ -87,19 +93,66 @@ defmodule KinyarwandaModeration.Lexicon do
   @doc """
   Resolves the path of the lexicon shipped with this package.
 
-  The path is resolved at runtime rather than baked in at compile time, so the
-  same code works when the library is a Mix dependency (where `priv` is copied
-  into `_build`) and inside a release (where it lives under the release's priv
-  directory).
+  The lexicon lives in `data/` at the root of this project, next to `lib/`, not
+  under `priv/`. Mix only copies `priv/` into the build output, so a root `data/`
+  directory is never mirrored into `_build` on its own; resolution therefore
+  happens at runtime against a short list of candidates:
+
+    1. the `data/` inside the built application directory, when build tooling
+       copied it there,
+    2. the `data/` of the source tree this module was compiled from, which is
+       what resolves for a checkout and for a dependency under `deps/`,
+    3. the `priv/data` of a release, for lexicons packaged before the move.
+
+  Ordering flips under `from: :release`, where the release's own copy is the
+  authoritative one. The first candidate that exists on disk wins, and the first
+  candidate is returned as-is when none of them do, so the error a caller sees
+  names the most likely location.
   """
   @spec default_path(keyword() | map()) :: binary()
   def default_path(opts \\ []) do
+    candidates(opts)
+    |> Enum.find(&File.regular?/1)
+    |> Kernel.||(hd(candidates(opts)))
+  end
+
+  @doc """
+  Returns the candidate paths `default_path/1` searches, in order.
+
+  Useful for diagnostics, and for tests that must not depend on which of the
+  candidates happens to exist on the machine running them.
+  """
+  @spec default_path_candidates(keyword() | map()) :: [binary()]
+  def default_path_candidates(opts \\ []), do: candidates(opts)
+
+  defp candidates(opts) do
     case get_opt(opts, :from, :code) do
       :release ->
-        Path.join([:code.priv_dir(:kinyarwanda_moderation), "data", @default_file])
+        [priv_path(), app_data_path(), source_data_path()]
 
       _ ->
-        Path.join([Application.app_dir(:kinyarwanda_moderation, "priv"), "data", @default_file])
+        [app_data_path(), source_data_path(), priv_path()]
+    end
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp app_data_path do
+    Path.join([Application.app_dir(:kinyarwanda_moderation), @data_dir, @default_file])
+  end
+
+  defp source_data_path do
+    Path.join([@source_root, @data_dir, @default_file])
+  end
+
+  # Returns a path even when no `priv` directory exists on disk, so this
+  # candidate is only ever selected if `default_path/1` finds a real file there.
+  # Guarded anyway: `:code.priv_dir/1` raises when the application is not loaded.
+  defp priv_path do
+    try do
+      Path.join([:code.priv_dir(:kinyarwanda_moderation), @data_dir, @default_file])
+    rescue
+      ArgumentError -> nil
     end
   end
 
@@ -111,10 +164,10 @@ defmodule KinyarwandaModeration.Lexicon do
 
   Two on-disk shapes are accepted:
 
-    * the structured object documented by `priv/data/lexicon.schema.json` and
-      exemplified by `priv/data/rw_lexicon.json`, and
+    * the structured object documented by `data/lexicon.schema.json` and
+      exemplified by `data/rw_lexicon.json`, and
     * a flat JSON array of terms, such as
-      `["term_one", "term_two"]` (see `priv/data/rw_hate_speech.json`). A flat
+      `["term_one", "term_two"]` (see `data/rw_hate_speech.json`). A flat
       list is treated as a single `#{inspect(@flat_category_id)}` category; use
       the structured form when you need severities and actions per category.
   """
@@ -254,7 +307,7 @@ defmodule KinyarwandaModeration.Lexicon do
 
   defp category_entries(category, path, normalization) do
     (category.terms ++ category.phrases)
-    |> Enum.map(fn term ->
+    |> Enum.flat_map(fn term ->
       tokens = Normalizer.tokens(term, normalization)
 
       if tokens == [] do
@@ -263,16 +316,45 @@ defmodule KinyarwandaModeration.Lexicon do
                 "normalizes to nothing; check for stray punctuation"
       end
 
-      %{
-        term: term,
-        tokens: tokens,
-        term_count: length(tokens),
+      context = %{
         category_id: category.id,
         category_label: category.label,
         action: category.action,
         severity: category.severity
       }
+
+      [entry(term, tokens, context) | glued_entries(term, tokens, normalization, context)]
     end)
+  end
+
+  defp entry(term, tokens, context) do
+    Map.merge(context, %{term: term, tokens: tokens, term_count: length(tokens)})
+  end
+
+  # Writers routinely run the words of a phrase together, and the matcher cannot
+  # see inside a token once it is one, so a multi-word entry also gets a
+  # space-stripped alias. Emitted as a separate entry with its own `term` - the
+  # writer-facing spelling - while `tokens` holds the normalized single token the
+  # automaton stores, so the reported match still names something real and the
+  # token offsets stay right.
+  defp glued_entries(_term, [_single], _normalization, _context), do: []
+
+  defp glued_entries(term, _tokens, normalization, context) do
+    if Map.get(normalization, :glued_phrases) do
+      glued = String.replace(term, ~r/\s+/u, "")
+      normalized = Normalizer.normalize(glued, normalization)
+
+      if Normalizer.tokens(glued, normalization) == [normalized] do
+        [entry(glued, [normalized], context)]
+      else
+        # Gluing is not idempotent for this entry (normalizing it yields more
+        # than one token), so the alias would not be the single token we just
+        # built and the offsets would be wrong.
+        []
+      end
+    else
+      []
+    end
   end
 
   defp list_of(nil, _field, _id, _path), do: []

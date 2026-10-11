@@ -7,27 +7,51 @@ defmodule KinyarwandaModeration.Normalizer do
   most:
 
     * **l / r folding** - Kinyarwanda has no native *l* in most positions, so
-      writers frequently swap *l* and *r* for each other
-      (`igicucu` / `igiculu`). Both spellings are folded onto *r* before
-      comparison.
+      writers frequently swap *l* and *r* for each other. The fold is one way:
+      only *l* becomes *r*, so `igiculu` and `igicuru` normalize to the same
+      token. It runs before the squashes because turning an *l* into an *r* can
+      leave two *r*s side by side.
 
     * **Diacritic folding** - The standard orthography is unaccented, but users
       type `é`, `á`, `è` and friends anyway. Text is decomposed to NFD and the
       combining marks are dropped.
 
     * **Repeat collapsing** - Runs of three or more identical letters are
-      collapsed to one, which defeats padding such as `amaaani`. Doubled vowels
-      that are two letters long are left alone because vowel length is
-      meaningful in Kinyarwanda.
+      collapsed to one, which defeats padding such as `amaaani`. Double
+      squashing subsumes this for letters, so on the default pipeline it is only
+      observable when `squash_doubles: false`; it stays a separate switch for
+      callers who want triple-run padding gone without merging `amaani`.
+
+    * **Double squashing** - Any doubled letter is collapsed to one, so
+      `igiituba`, `igituuba` and `igitubba` all reach a listed `igituba`. The
+      lexicon is squashed the same way, which is what makes the comparison
+      symmetric. It costs recall when an evader pads a listed word and costs
+      precision only when an innocent doubled spelling squashes onto a *listed*
+      term, so it is on by default. It also merges the long-vowel spellings
+      `amaani` and `kuubona` onto `amani` and `kubona`; that is safe because the
+      lexicon side is merged identically, so a listed `amaani` still matches.
 
     * **Noun-class prefix stripping** - Kinyarwanda nouns inflect heavily by
       prefix (`umu-`, `aba-`, `iki-`, `ibi-`, ...). Matching a root term also
       checks the stems left after removing a known prefix, so inflected forms
       still hit.
 
+    * **Augment dropping** - A noun's initial vowel usually disappears when it
+      follows a locative or a verb, leaving the class prefix glued onto the
+      stem (`ku` + `igituba` becomes `kugituba`). Matching a term also checks
+      the form with its initial vowel removed, so the glued spelling still hits.
+
+    * **Phrase gluing** - Multi-word entries are also checked with their spaces
+      removed (`kanywe nzobya` / `kanywenzobya`), because writers routinely run
+      the words of a phrase together.
+
+  Everything happens at the **token boundaries** the matcher works on, so these
+  rules cannot see inside a word. A term listed as `cumita` still will not match
+  `uyumucumita`, because the token itself is `uyumucumita`.
+
   Every rule is individually switchable, either globally through the options
   accepted here or per-lexicon through the `"normalization"` object in
-  `priv/data/rw_lexicon.json`.
+  `data/rw_lexicon.json`.
 
   ## Examples
 
@@ -38,15 +62,18 @@ defmodule KinyarwandaModeration.Normalizer do
       ["amani", "yego"]
 
       iex> KinyarwandaModeration.Normalizer.variants("abadeputa")
-      ["abadeputa", "deputa"]
+      ["abadeputa", "deputa", "badeputa"]
 
   """
 
   @defaults %{
     fold_l_r: true,
     strip_diacritics: true,
+    squash_doubles: true,
     collapse_repeats: true,
-    strip_prefixes: true
+    strip_prefixes: true,
+    augment_drop: true,
+    glued_phrases: true
   }
 
   # Option keys as they appear in JSON lexicons, mapped onto their atom form.
@@ -64,9 +91,35 @@ defmodule KinyarwandaModeration.Normalizer do
 
   @min_stem_length 3
 
+  # Kinyarwanda nouns normally carry an initial-vowel augment (`i-gituba`,
+  # `u-mwana`). In connected speech the augment drops after a locative or a verb
+  # and the class prefix is left glued straight onto the stem:
+  #
+  #     ku  + igituba -> kugituba
+  #     ibi + igituba -> ibigituba
+  #     ndi + igituba -> ndigigituba
+  #
+  # The bare vowel is matched rather than the full class prefix because the
+  # prefix that survives is unrelated to the one the lexicon entry carries
+  # (`ibi-` and `ku-` both leave `gituba`). See `drop_augment/1`.
+  @augments ~w(a e i o u)
+
   @combining_marks ~r/[\p{Mn}\p{Mc}]/u
   @whitespace ~r/\s+/u
   @repeated_letter ~r/(.)\1{2,}/u
+
+  # Any run of two or more of the same letter. Letters only, so whitespace and
+  # punctuation are untouched.
+  #
+  # Doubling is legitimate in a handful of Kinyarwanda words, notably the
+  # consonant `nny` in `innyo` and `ubunnyano`. There is no guard for them on
+  # purpose: `nny` is just `n` followed by the `ny` digraph, so shrinking it is
+  # the same edit that collapses doubled-`n` padding, and the two cannot be
+  # told apart. No distinction is needed either, because the lexicon side is
+  # squashed identically, so a term listed as `innyo` is matched by `innyo`,
+  # `inyo` and `innyoo` alike. Guarding `nny` would only lose recall: padding
+  # `ny` as `nny` is a plausible evasion (see the `kanywenzobya` regression).
+  @doubled_letter ~r/(\p{L})\1+/u
 
   # ASCII apostrophe plus the typographic ones writers actually paste in
   # (U+2018, U+2019, U+02BC, U+2032). A literal string rather than regex escapes
@@ -85,8 +138,9 @@ defmodule KinyarwandaModeration.Normalizer do
   The default normalization pipeline, as a map of options.
 
   Returns a map with the keys `:fold_l_r`, `:strip_diacritics`,
-  `:collapse_repeats` and `:strip_prefixes`, all `true`. Use it as the base when
-  building custom option sets.
+  `:squash_doubles`, `:collapse_repeats`, `:strip_prefixes`, `:augment_drop`
+  and `:glued_phrases`, all `true`. Use it as the base when building custom
+  option sets.
   """
   @spec defaults() :: map()
   def defaults, do: @defaults
@@ -109,11 +163,24 @@ defmodule KinyarwandaModeration.Normalizer do
   def normalize(text, opts) when is_binary(text) do
     opts = effective(opts)
 
+    # The order of the three letter rules is load-bearing.
+    #
+    # fold_l_r comes first because it is the only rule that rewrites one letter
+    # into another, and it rewrites l to r. Running it after the squashes lets it
+    # create a fresh doubled letter that nothing collapses afterwards (`lrl`
+    # becomes `rrr`, then `r`), which makes the pipeline non-idempotent and makes
+    # variants/2 disagree with normalize/2 about the same token.
+    #
+    # collapse_repeats must stay ahead of squash_doubles. A three-letter run
+    # such as `amaaani` already satisfies the squash, so running the squash
+    # first would collapse it even with `collapse_repeats: false` and make that
+    # switch unobservable.
     text
     |> strip_accents(opts)
     |> String.downcase()
-    |> collapse_repeats(opts)
     |> fold_l_r(opts)
+    |> collapse_repeats(opts)
+    |> squash_doubles(opts)
     |> then(&Regex.replace(@apostrophes_regex, &1, "'"))
     |> then(&Regex.replace(@whitespace, &1, " "))
     |> String.trim()
@@ -168,13 +235,23 @@ defmodule KinyarwandaModeration.Normalizer do
   Returns the lookup candidates for a single already-tokenized `token`.
 
   The first element is always the normalized token itself. Any further elements
-  are noun-class stems, present only when `:strip_prefixes` is enabled and the
-  stem is at least #{@min_stem_length} characters long.
+  are alternates produced by the inflection rules:
+
+    * noun-class stems, when `:strip_prefixes` is enabled and the stem is at
+      least #{@min_stem_length} characters long
+    * the augment-dropped form, when `:augment_drop` is enabled and the drop
+      leaves at least #{@min_stem_length} characters
+
+  `:glued_phrases` is not applied here - it needs the whole entry, so it is
+  handled by `KinyarwandaModeration.Lexicon` when entries are compiled.
 
   ## Examples
 
       iex> KinyarwandaModeration.Normalizer.variants("umunyarwanda")
-      ["umunyarwanda", "nyarwanda"]
+      ["umunyarwanda", "nyarwanda", "munyarwanda"]
+
+      iex> KinyarwandaModeration.Normalizer.variants("kugituba")
+      ["kugituba", "gituba"]
 
       iex> KinyarwandaModeration.Normalizer.variants("yego")
       ["yego"]
@@ -184,9 +261,8 @@ defmodule KinyarwandaModeration.Normalizer do
   def variants(token, opts \\ %{}) when is_binary(token) do
     opts = effective(opts)
     base = normalize(token, opts)
-    stems = if opts[:strip_prefixes], do: stems(base), else: []
 
-    [base | stems]
+    [base | stems(base, opts) ++ dropped(base, opts)]
     |> Enum.reject(&(&1 == ""))
     |> Enum.uniq()
   end
@@ -196,13 +272,48 @@ defmodule KinyarwandaModeration.Normalizer do
 
   Exposed mainly for tests and tooling; most callers want `variants/2`.
   """
-  @spec stems(binary()) :: [binary()]
-  def stems(token) when is_binary(token) do
+  @spec stems(binary(), options()) :: [binary()]
+  def stems(token, opts \\ %{}) when is_binary(token) do
+    if effective(opts)[:strip_prefixes], do: prefix_stems(token), else: []
+  end
+
+  @doc """
+  Returns the form of an already normalized `token` with its initial-vowel
+  augment removed, or `[]` when the token has no augment or the result would be
+  shorter than #{@min_stem_length} characters.
+
+  Exposed mainly for tests and tooling; most callers want `variants/2`.
+  """
+  @spec augment_dropped(binary(), options()) :: [binary()]
+  def augment_dropped(token, opts \\ %{}) do
+    if effective(opts)[:augment_drop], do: drop_augment(token), else: []
+  end
+
+  defp prefix_stems(token) do
     for prefix <- @noun_class_prefixes,
         String.starts_with?(token, prefix),
         stem = String.replace_prefix(token, prefix, ""),
         String.length(stem) >= @min_stem_length,
         do: stem
+  end
+
+  # Only the initial vowel is removed. What remains is the class prefix plus the
+  # stem (`igituba` -> `gituba`), which is exactly the shape an augment drop
+  # leaves behind, whichever locative or verb caused the drop. Gating on the
+  # resulting length is what keeps short entries (`imboro` -> `mboro` is fine,
+  # but `aba` -> `ba` is not) from matching far too much.
+  defp drop_augment(<<first::utf8, rest::binary>>) do
+    if List.to_string([first]) in @augments and String.length(rest) >= @min_stem_length do
+      [rest]
+    else
+      []
+    end
+  end
+
+  defp drop_augment(_token), do: []
+
+  defp dropped(token, opts) do
+    if opts[:augment_drop], do: drop_augment(token), else: []
   end
 
   @doc """
@@ -227,7 +338,7 @@ defmodule KinyarwandaModeration.Normalizer do
 
   Only the keys that appear in both `overrides` and the known option set are
   applied, so a caller - or a lexicon - can override a single flag without
-  having to restate the other three. This is what lets
+  having to restate the others. This is what lets
   `KinyarwandaModeration.check/2` honour `strip_prefixes: false` for one call
   without discarding the normalization the lexicon declared.
   """
@@ -256,6 +367,11 @@ defmodule KinyarwandaModeration.Normalizer do
   end
 
   defp strip_accents(text, _opts), do: text
+
+  defp squash_doubles(text, %{squash_doubles: true}),
+    do: Regex.replace(@doubled_letter, text, "\\1")
+
+  defp squash_doubles(text, _opts), do: text
 
   defp collapse_repeats(text, %{collapse_repeats: true}),
     do: Regex.replace(@repeated_letter, text, "\\1")

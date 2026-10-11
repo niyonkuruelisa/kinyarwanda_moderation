@@ -11,6 +11,7 @@ defmodule KinyarwandaModeration.MixProject do
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      elixirc_paths: elixirc_paths(Mix.env()),
       description: description(),
       package: package(),
       source_url: @source_url,
@@ -42,6 +43,9 @@ defmodule KinyarwandaModeration.MixProject do
     ]
   end
 
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
   defp description do
     """
     Open-source Kinyarwanda content moderation, profanity filtering and hate
@@ -53,7 +57,7 @@ defmodule KinyarwandaModeration.MixProject do
   defp package do
     [
       name: "kinyarwanda_moderation",
-      files: ~w(lib priv/data mix.exs README.md LICENSE CHANGELOG.md),
+      files: ~w(lib data mix.exs README.md LICENSE CHANGELOG.md),
       licenses: ["MIT"],
       maintainers: ["Niyonkuru Elisa"],
       links: %{

@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/niyonkuruelisa/kinyarwanda_moderation/priv/data/lexicon.schema.json",
+  "$id": "https://github.com/niyonkuruelisa/kinyarwanda_moderation/data/lexicon.schema.json",
   "title": "Kinyarwanda moderation lexicon",
-  "description": "Schema for the JSON files this library loads. Two shapes are accepted: the structured form used by priv/data/rw_lexicon.json (categories with severities and actions), and a flat array of terms such as priv/data/rw_hate_speech.json. Contributors add words here; the library loads and compiles them at runtime.",
+  "description": "Schema for the JSON files this library loads. Two shapes are accepted: the structured form used by data/rw_lexicon.json (categories with severities and actions), and a flat array of terms such as data/rw_hate_speech.json. Contributors add words here; the library loads and compiles them at runtime.",
   "oneOf": [
     { "$ref": "#/definitions/structured" },
     { "$ref": "#/definitions/flat" }
@@ -59,9 +59,21 @@
               "type": "boolean",
               "description": "Collapse runs of three or more identical letters down to one."
             },
+            "squash_doubles": {
+              "type": "boolean",
+              "description": "Collapse any doubled letter to one, so 'igiituba' and 'igituuba' both reach a listed 'igituba'. Also merges long-vowel spellings such as 'amaani' onto 'amani'."
+            },
             "strip_prefixes": {
               "type": "boolean",
               "description": "Match noun-class prefixes (umu-, aba-, iki-, ...) so inflected forms still hit. Increases false positives."
+            },
+            "augment_drop": {
+              "type": "boolean",
+              "description": "Also check a term with its initial-vowel augment removed, so 'kugituba' reaches a listed 'igituba'."
+            },
+            "glued_phrases": {
+              "type": "boolean",
+              "description": "Also check multi-word phrases with their spaces removed, so 'kanywenzobya' reaches a listed 'kanywe nzobya'."
             }
           }
         },

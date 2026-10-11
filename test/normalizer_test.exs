@@ -10,8 +10,11 @@ defmodule KinyarwandaModeration.NormalizerTest do
       assert Normalizer.defaults() == %{
                fold_l_r: true,
                strip_diacritics: true,
+               squash_doubles: true,
                collapse_repeats: true,
-               strip_prefixes: true
+               strip_prefixes: true,
+               augment_drop: true,
+               glued_phrases: true
              }
     end
   end
@@ -33,13 +36,35 @@ defmodule KinyarwandaModeration.NormalizerTest do
     end
 
     test "collapses runs of three or more identical letters" do
-      assert Normalizer.normalize("amaaani") == "amani"
       assert Normalizer.normalize("Gooood") == "god"
-      assert Normalizer.normalize("amaaani", collapse_repeats: false) == "amaaani"
+      assert Normalizer.normalize("amaaani") == "amani"
     end
 
-    test "leaves a doubled letter alone because vowel length is meaningful" do
-      assert Normalizer.normalize("Good") == "good"
+    test "collapse_repeats is independently switchable" do
+      # Subsumed by squash_doubles for letters, so it is only observable on its
+      # own: it kills the three-letter run but keeps the meaningful long vowel.
+      assert Normalizer.normalize("amaaani", squash_doubles: false) == "amani"
+      assert Normalizer.normalize("amaani", squash_doubles: false) == "amaani"
+
+      assert Normalizer.normalize("amaaani", squash_doubles: false, collapse_repeats: false) ==
+               "amaaani"
+    end
+
+    test "squashes a doubled letter so padding cannot evade a match" do
+      assert Normalizer.normalize("igiituba") == "igituba"
+      assert Normalizer.normalize("igituuba") == "igituba"
+      assert Normalizer.normalize("igitubba") == "igituba"
+      assert Normalizer.normalize("Good") == "god"
+    end
+
+    test "squashing also merges long-vowel spellings, and is switchable" do
+      # Accepted: the merged spelling only matters if the short form is itself
+      # listed, and the lexicon is squashed the same way, so both still match.
+      assert Normalizer.normalize("amaani") == "amani"
+      assert Normalizer.normalize("kuubona") == "kubona"
+
+      assert Normalizer.normalize("amaani", squash_doubles: false) == "amaani"
+      assert Normalizer.normalize("igiituba", squash_doubles: false) == "igiituba"
     end
 
     test "collapses whitespace" do
@@ -99,18 +124,35 @@ defmodule KinyarwandaModeration.NormalizerTest do
   end
 
   describe "variants/2" do
-    test "returns the token itself first, then its noun-class stems" do
-      assert Normalizer.variants("abadeputa") == ["abadeputa", "deputa"]
-      assert Normalizer.variants("umunyarwanda") == ["umunyarwanda", "nyarwanda"]
+    test "returns the token itself first, then its noun-class stems and augment drop" do
+      assert Normalizer.variants("abadeputa") == ["abadeputa", "deputa", "badeputa"]
+      assert Normalizer.variants("umunyarwanda") == ["umunyarwanda", "nyarwanda", "munyarwanda"]
     end
 
     test "returns just the token when there is no stem" do
       assert Normalizer.variants("yego") == ["yego"]
     end
 
+    test "adds the augment-dropped form a locative or verb leaves behind" do
+      assert Normalizer.variants("igituba") == ["igituba", "gituba"]
+      assert Normalizer.variants("igituba", augment_drop: false) == ["igituba"]
+    end
+
+    test "meets prefix stripping in the middle" do
+      # `ku` is a noun-class prefix, so the input side reaches `gituba` by
+      # stripping it - which is the same form augment dropping gives the entry
+      # `igituba`. Neither rule alone closes that gap.
+      assert Normalizer.variants("kugituba") == ["kugituba", "gituba"]
+      assert Normalizer.variants("kugituba", strip_prefixes: false) == ["kugituba"]
+      assert Normalizer.variants("kugituba", augment_drop: false) == ["kugituba", "gituba"]
+    end
+
     test "can be told to skip prefix stripping" do
-      assert Normalizer.variants("abadeputa", strip_prefixes: false) == ["abadeputa"]
-      assert Normalizer.variants("abadeputa", %{"strip_prefixes" => false}) == ["abadeputa"]
+      assert Normalizer.variants("abadeputa", strip_prefixes: false) ==
+               ["abadeputa", "badeputa"]
+
+      assert Normalizer.variants("abadeputa", %{"strip_prefixes" => false}) ==
+               ["abadeputa", "badeputa"]
     end
   end
 
@@ -122,6 +164,32 @@ defmodule KinyarwandaModeration.NormalizerTest do
     test "never produces a stem shorter than the minimum" do
       assert Normalizer.stems("abana") == []
       assert Normalizer.stems("umu") == []
+    end
+
+    test "returns nothing when prefix stripping is off" do
+      assert Normalizer.stems("abadeputa", strip_prefixes: false) == []
+    end
+  end
+
+  describe "augment_dropped/1" do
+    test "removes the initial vowel, leaving the class prefix on the stem" do
+      assert Normalizer.augment_dropped("igituba") == ["gituba"]
+      assert Normalizer.augment_dropped("imboro") == ["mboro"]
+    end
+
+    test "returns nothing when the token has no initial-vowel augment" do
+      assert Normalizer.augment_dropped("yego") == []
+      assert Normalizer.augment_dropped("gituba") == []
+    end
+
+    test "never produces a remainder shorter than the minimum" do
+      assert Normalizer.augment_dropped("aba") == []
+      assert Normalizer.augment_dropped("umu") == []
+      assert Normalizer.augment_dropped("umva") == ["mva"]
+    end
+
+    test "returns nothing when the rule is off" do
+      assert Normalizer.augment_dropped("igituba", augment_drop: false) == []
     end
   end
 

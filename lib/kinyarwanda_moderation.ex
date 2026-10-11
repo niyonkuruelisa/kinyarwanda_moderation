@@ -26,14 +26,27 @@ defmodule KinyarwandaModeration do
   ## What makes this different from a word list
 
   Kinyarwanda is agglutinative and inconsistently spelled online, so an exact
-  substring search misses most real-world cases. Four normalizations run on both
-  the lexicon **and** the incoming text, which is what keeps them symmetric:
+  substring search misses most real-world cases. Seven normalizations and
+  derivations run on both the lexicon **and** the incoming text, which is what
+  keeps them symmetric:
 
-    * **l / r folding** - `igicucu` and `igiculu` normalize to the same token.
+    * **l / r folding** - every *l* becomes *r*, so `igiculu` and `igicuru`
+      normalize to the same token. A writer spelling an *r* as an *l* cannot
+      dodge a listed term, whichever spelling the term itself uses.
     * **Diacritic folding** - `é`, `á`, `è` are reduced to their base letters.
+    * **Double squashing** - `igiituba`, `igituuba` and `igitubba` all reach a
+      listed `igituba`, because a doubled letter is squashed to one on both
+      sides. Padding a word with a repeated letter no longer evades a match.
     * **Repeat collapsing** - `amaaani` becomes `amani`, defeating padding.
     * **Noun-class prefix stripping** - the stem of `abadeputa` also matches a
       lexicon entry for `deputa`.
+    * **Augment dropping** - a locative or verb that swallows the initial vowel
+      of a noun is put back: `kugituba` reaches a listed `igituba`, because one
+      side loses the augment (`igituba` -> `gituba`) and the other loses the
+      prefix (`kugituba` -> `gituba`).
+    * **Phrase gluing** - every multi-word phrase gains a space-stripped alias,
+      so a writer who runs it together still matches: `kanywenzobya` reaches a
+      listed `kanywe nzobya`.
 
   Matching itself is [Aho-Corasick](https://en.wikipedia.org/wiki/Aho%E2%80%93Corasick_algorithm)
   over **token sequences**, so a phrase never matches across a word boundary and
@@ -41,20 +54,42 @@ defmodule KinyarwandaModeration do
   implementation is dependency-free pure Elixir. See
   `KinyarwandaModeration.Normalizer` and `KinyarwandaModeration.Matcher`.
 
+  ## Where a listed word matches
+
+  There is no `contains`, `startswith` or `endswith` option, and none is needed,
+  because every listed word already behaves like all three at once. A lexicon
+  entry is matched wherever it starts inside the token stream, and both sides are
+  expanded before the comparison, so a prefix on the text behaves like a prefix
+  on the entry, and the entry behaves like a stem:
+
+  | The writer typed | The lexicon lists | Matches? | Why |
+  | --- | --- | --- | --- |
+  | `igituba` | `igituba` | yes | exact token |
+  | `igituba` | `tuba` | yes | entry stems to `tuba` |
+  | `kugituba` | `igituba` | yes | augment drop meets prefix stripping |
+  | `kanywenzobya` | `kanywe nzobya` | yes | phrase gluing |
+  | `uyumucumita` | `cumita` | **no** | the word is buried mid-token |
+  | `nywe nzobya` | `kanywe nzobya` | no | the leading token is missing |
+
+  The one shape the engine cannot see is a word glued into the **middle** of a
+  longer token (`cumita` inside `uyumucumita`), because the automaton walks
+  tokens, not characters. Listing the full inflected spelling, or adding the
+  augment-dropped stem as its own entry, is the supported way to catch those.
+
   ## The lexicon
 
-  Lexicons are plain JSON (see `priv/data/lexicon.schema.json`), which means the
+  Lexicons are plain JSON (see `data/lexicon.schema.json`), which means the
   word list is a data asset you version, review and translate without touching
   code:
 
       {:ok, raw} =
-        "priv/data/rw_lexicon.json"
+        "data/rw_lexicon.json"
         |> File.read()
         |> then(fn {:ok, body} -> {:ok, KinyarwandaModeration.JSON.decode!(body)} end)
 
       KinyarwandaModeration.compile(raw)
 
-  The bundled `priv/data/rw_lexicon.json` ships with **placeholder** entries only.
+  The bundled `data/rw_lexicon.json` ships with **placeholder** entries only.
   It is a working example of the format, not a hate-speech list. See the
   `"notice"` field inside it.
 

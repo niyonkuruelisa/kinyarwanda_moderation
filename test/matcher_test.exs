@@ -15,7 +15,9 @@ defmodule KinyarwandaModeration.MatcherTest do
       "fold_l_r" => true,
       "strip_prefixes" => true,
       "collapse_repeats" => true,
-      "strip_diacritics" => true
+      "strip_diacritics" => true,
+      "augment_drop" => true,
+      "glued_phrases" => true
     },
     "categories" => [
       %{
@@ -38,6 +40,10 @@ defmodule KinyarwandaModeration.MatcherTest do
 
   defp matcher(raw \\ @raw), do: raw |> Lexicon.build() |> Matcher.compile()
 
+  defp normalization(overrides \\ []) do
+    KinyarwandaModeration.Normalizer.effective(Map.new(overrides))
+  end
+
   describe "compile/1" do
     test "carries the lexicon's identity and normalization into the matcher" do
       m = matcher()
@@ -46,8 +52,8 @@ defmodule KinyarwandaModeration.MatcherTest do
       assert m.locale == "rw"
       assert m.normalization == Lexicon.build(@raw).normalization
       assert m.normalization.fold_l_r
-      assert m.node_count == 6
-      assert Matcher.node_count(m) == 6
+      assert m.node_count == 8
+      assert Matcher.node_count(m) == 8
     end
 
     test "counts one node per distinct token, plus the root" do
@@ -153,6 +159,58 @@ defmodule KinyarwandaModeration.MatcherTest do
 
       assert Matcher.scan(matcher(raw), ["igicuru"]) |> length() == 1
     end
+
+    test "reaches a lexicon root whose augment a locative or verb dropped" do
+      # The entry side loses its augment (`igituba` -> `gituba`) while the input
+      # side keeps `ku` and loses it by prefix stripping (`kugituba` -> `gituba`).
+      # They meet in the middle, so dropping either rule breaks the match.
+      base = %{
+        "version" => "1.0.0",
+        "locale" => "rw",
+        "categories" => [%{"id" => "x", "terms" => ["igituba"], "action" => "reject"}]
+      }
+
+      both =
+        matcher(
+          Map.put(base, "normalization", %{"augment_drop" => true, "strip_prefixes" => true})
+        )
+
+      no_augment = matcher(Map.put(base, "normalization", %{"augment_drop" => false}))
+      no_prefixes = matcher(Map.put(base, "normalization", %{"strip_prefixes" => false}))
+
+      assert Matcher.scan(both, ["kugituba", "cyane"]) |> Enum.map(& &1.entry.term) == ["igituba"]
+      assert Matcher.scan(both, ["igituba"]) |> Enum.map(& &1.entry.term) == ["igituba"]
+      assert Matcher.scan(no_augment, ["kugituba"]) == []
+      assert Matcher.scan(no_prefixes, ["kugituba"]) == []
+
+      # no stem reaches inside the token, so this stays a miss
+      assert Matcher.scan(both, ["ndigigituba"]) == []
+    end
+
+    test "matches a phrase a writer ran together into one token" do
+      m = matcher()
+
+      # the two-token spelling still matches the phrase, not the glued alias
+      assert Matcher.scan(m, ["badterm", "secondterm"]) |> Enum.map(& &1.entry.term) ==
+               ["badterm", "badterm secondterm"]
+
+      assert Matcher.scan(m, ["and", "badtermsecondterm"]) |> Enum.map(& &1.entry.term) ==
+               ["badtermsecondterm"]
+
+      # the glued alias is one token, so offsets and span stay right
+      assert [glued] = Matcher.scan(m, ["and", "badtermsecondterm"])
+      assert glued.start_token == 1
+      assert glued.end_token == 1
+      assert glued.entry.term_count == 1
+      assert glued.entry.category_id == "a"
+    end
+
+    test "does not read a glued word as a phrase when the words are not adjacent" do
+      m = matcher()
+
+      assert Matcher.scan(m, ["badterm", "filler", "secondterm"]) |> Enum.map(& &1.entry.term) ==
+               ["badterm"]
+    end
   end
 
   describe "install/1, current/0 and clear/0" do
@@ -185,30 +243,25 @@ defmodule KinyarwandaModeration.MatcherTest do
   end
 
   describe "expansion/2" do
-    test "returns every prefix-stripped reading of a phrase" do
-      normalization = %{
-        fold_l_r: true,
-        strip_prefixes: true,
-        collapse_repeats: true,
-        strip_diacritics: true
-      }
+    test "returns every prefix-stripped and augment-dropped reading of a phrase" do
+      assert Matcher.expansion(["abadeputa", "yego"], normalization()) ==
+               [["abadeputa", "yego"], ["deputa", "yego"], ["badeputa", "yego"]]
 
-      assert Matcher.expansion(["abadeputa", "yego"], normalization) ==
-               [["abadeputa", "yego"], ["deputa", "yego"]]
+      assert Matcher.expansion(["igituba"], normalization()) ==
+               [["igituba"], ["gituba"]]
 
-      assert Matcher.expansion(["yego"], normalization) == [["yego"]]
-      assert Matcher.expansion([], normalization) == [[]]
+      assert Matcher.expansion(["yego"], normalization()) == [["yego"]]
+      assert Matcher.expansion([], normalization()) == [[]]
     end
 
     test "expands nothing when prefix stripping is off" do
-      normalization = %{
-        fold_l_r: true,
-        strip_prefixes: false,
-        collapse_repeats: true,
-        strip_diacritics: true
-      }
+      assert Matcher.expansion(["abadeputa"], normalization(strip_prefixes: false)) ==
+               [["abadeputa"], ["badeputa"]]
+    end
 
-      assert Matcher.expansion(["abadeputa"], normalization) == [["abadeputa"]]
+    test "expands nothing when augment dropping is off" do
+      assert Matcher.expansion(["igituba"], normalization(augment_drop: false)) ==
+               [["igituba"]]
     end
   end
 end

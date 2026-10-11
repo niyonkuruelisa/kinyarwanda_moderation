@@ -2,6 +2,7 @@ defmodule KinyarwandaModeration.LexiconTest do
   use ExUnit.Case, async: true
 
   alias KinyarwandaModeration.Lexicon
+  alias KinyarwandaModeration.Tmp
 
   doctest KinyarwandaModeration.Lexicon
 
@@ -34,6 +35,28 @@ defmodule KinyarwandaModeration.LexiconTest do
       assert Path.basename(Lexicon.default_path(from: :release)) == "rw_lexicon.json"
       assert Path.basename(Lexicon.default_path(%{from: :release})) == "rw_lexicon.json"
     end
+
+    test "resolves inside the top-level data/ directory, not priv/" do
+      assert Path.basename(Path.dirname(Lexicon.default_path())) == "data"
+      assert File.regular?(Lexicon.default_path())
+    end
+
+    test "exposes the searched candidates in a stable, de-duplicated order" do
+      candidates = Lexicon.default_path_candidates()
+
+      assert candidates == Enum.uniq(candidates)
+      assert candidates != []
+      assert Enum.any?(candidates, &String.ends_with?(&1, "/data/rw_lexicon.json"))
+
+      assert Lexicon.default_path_candidates(from: :release) != candidates
+    end
+
+    test "falls back to a source-tree path when the built copy is absent" do
+      source = Enum.find(Lexicon.default_path_candidates(), &File.regular?/1)
+
+      refute is_nil(source)
+      refute String.contains?(source, "_build")
+    end
   end
 
   describe "load/2" do
@@ -42,7 +65,7 @@ defmodule KinyarwandaModeration.LexiconTest do
       assert lexicon.version == "0.1.0"
       assert lexicon.locale == "rw"
       assert Lexicon.load(:default).version == "0.1.0"
-      assert Lexicon.size(lexicon) == 8
+      assert Lexicon.size(lexicon) == 10
     end
 
     test "accepts a directory and looks the bundled file up inside it" do
@@ -56,7 +79,7 @@ defmodule KinyarwandaModeration.LexiconTest do
       assert lexicon.version == "0.0.0"
       assert lexicon.locale == "rw"
       assert lexicon.notice == @flat_notice
-      assert Lexicon.size(lexicon) == 8
+      assert Lexicon.size(lexicon) == 38
 
       assert [category] = lexicon.categories
       assert category.id == "flat_terms"
@@ -64,11 +87,11 @@ defmodule KinyarwandaModeration.LexiconTest do
       assert category.description == nil
       assert category.action == :flag
       assert category.severity == :medium
-      assert category.term_count == 8
+      assert category.term_count == 37
     end
 
     test "raises when the file does not exist" do
-      missing = Path.join(System.tmp_dir!(), "definitely_absent_lexicon.json")
+      missing = Tmp.missing("definitely_absent_lexicon.json")
       refute File.exists?(missing)
 
       assert_raise ArgumentError, "no lexicon found at #{missing}", fn ->
@@ -77,8 +100,7 @@ defmodule KinyarwandaModeration.LexiconTest do
     end
 
     test "raises on malformed JSON" do
-      path = Path.join(System.tmp_dir!(), "kinyarwanda_moderation_broken.json")
-      File.write!(path, "{")
+      path = Tmp.write!("kinyarwanda_moderation_broken.json", "{")
       on_exit(fn -> File.rm(path) end)
 
       message = assert_raise ArgumentError, fn -> Lexicon.load(path) end
@@ -115,9 +137,59 @@ defmodule KinyarwandaModeration.LexiconTest do
       }
 
       lexicon = Lexicon.build(raw)
-      assert Lexicon.size(lexicon) == 2
+      assert Lexicon.size(lexicon) == 3
       assert [category] = lexicon.categories
       assert category.term_count == 2
+
+      assert Enum.map(lexicon.entries, & &1.term) == ["aaa", "aaa bbb", "aaabbb"]
+    end
+
+    test "gives every phrase a space-stripped alias carrying the normalized token" do
+      raw = %{
+        "version" => "1.0.0",
+        "locale" => "rw",
+        "categories" => [%{"id" => "x", "phrases" => ["AbaDeputa Yego"]}]
+      }
+
+      lexicon = Lexicon.build(raw)
+      assert [phrase, glued] = lexicon.entries
+
+      assert phrase.tokens == ["abadeputa", "yego"]
+      assert phrase.term_count == 2
+
+      # `term` keeps the writer's spelling, `tokens` holds what the automaton
+      # stores, and the alias is a single token so its span stays one wide.
+      assert glued.term == "AbaDeputaYego"
+      assert glued.tokens == ["abadeputayego"]
+      assert glued.term_count == 1
+      assert glued.category_id == phrase.category_id
+      assert glued.action == phrase.action
+    end
+
+    test "skips the alias when gluing is not idempotent" do
+      # A hyphen or comma inside the phrase makes the glued form tokenize into
+      # more than one token, so an alias would not be the single token it claims.
+      raw = %{
+        "version" => "1.0.0",
+        "locale" => "rw",
+        "categories" => [%{"id" => "x", "phrases" => ["aba-dep uta", "aaa bbb"]}]
+      }
+
+      lexicon = Lexicon.build(raw)
+
+      assert Enum.map(lexicon.entries, & &1.term) == ["aba-dep uta", "aaa bbb", "aaabbb"]
+    end
+
+    test "skips the alias when the lexicon turns phrase gluing off" do
+      raw = %{
+        "version" => "1.0.0",
+        "locale" => "rw",
+        "normalization" => %{"glued_phrases" => false},
+        "categories" => [%{"id" => "x", "phrases" => ["aaa bbb"]}]
+      }
+
+      lexicon = Lexicon.build(raw)
+      assert Enum.map(lexicon.entries, & &1.term) == ["aaa bbb"]
     end
 
     test "lets the caller override the normalization the lexicon declares" do
