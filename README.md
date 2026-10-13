@@ -14,7 +14,8 @@ is actually written online. It has **zero runtime dependencies**.
 
 The bundled word lists are detection patterns and nothing more. Read
 [the disclaimer](#a-disclaimer-about-the-word-lists) before you use or quote
-them.
+them; the same text travels with the data in
+[`data/README.md`](data/README.md).
 
 ```elixir
 KinyarwandaModeration.toxic?("some text")
@@ -130,6 +131,11 @@ graph LR
 > If you maintain this list: add a term when it is genuinely used to harm people,
 > not merely because it is crude. If you think an entry should not be here, that
 > is a useful bug report, not an offence.
+
+The same warning ships with the data itself, in
+[`data/README.md`](data/README.md) and in the `"notice"` field of
+`data/rw_lexicon.json`, so it travels with the words rather than only with this
+page.
 
 ---
 
@@ -272,7 +278,9 @@ required. If you only want a flat list of words, a plain
 > [!IMPORTANT]
 > The bundled `data/rw_lexicon.json` ships with **placeholder** entries only.
 > It is a working example of the format, not a hate-speech list. Read the
-> `"notice"` field inside it before using this library for anything real.
+> `"notice"` field inside it, and
+> [`data/README.md`](data/README.md), before using this library for anything
+> real.
 
 ### Bring your own lexicon
 

@@ -303,6 +303,24 @@ defmodule KinyarwandaModeration.LexiconTest do
     end
   end
 
+  describe "the bundled data disclaimer" do
+    test "travels inside the default lexicon's notice field" do
+      notice = Lexicon.load().notice
+
+      assert is_binary(notice)
+      assert notice =~ "detection patterns and nothing else"
+      assert notice =~ "never a verdict about a person or a group"
+      assert notice =~ "data/README.md"
+    end
+
+    test "is repeated in data/README.md beside the word lists" do
+      path = Path.join(Path.dirname(Lexicon.default_path()), "README.md")
+
+      assert File.regular?(path)
+      assert File.read!(path) =~ "Read this before you use the bundled data."
+    end
+  end
+
   describe "actions/0 and severities/0" do
     test "are ordered from least to most severe" do
       assert Lexicon.actions() == [:allow, :flag, :review, :reject]

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "locale": "rw",
   "updated": "2026-02-14",
-  "notice": "PLACEHOLDER DATA -- THIS IS NOT A REAL HATE-SPEECH LIST. Every entry below is a synthetic token that carries no meaning; they only exist so the engine, the tests and the tooling can be exercised end to end. Replace this file with a real, human-reviewed Kinyarwanda lexicon before relying on this library in production.",
+  "notice": "PLACEHOLDER DATA -- THIS IS NOT A REAL HATE-SPEECH LIST. Every entry below is a synthetic token that carries no meaning; they only exist so the engine, the tests and the tooling can be exercised end to end. Replace this file with a real, human-reviewed Kinyarwanda lexicon before relying on this library in production. USING A REAL LIST: the words it holds are detection patterns and nothing else. A listed term means \"this string is used abusively\", not that the maintainers endorse it, and many listed strings are ordinary Kinyarwanda words whose meaning depends entirely on who says them and why. A match is a signal for a human to look closer, never a verdict about a person or a group, and it will miss things it should catch. Do not quote a list like this as a definition of Kinyarwanda or of Rwandans. See the disclaimer in README.md and in data/README.md.",
   "normalization": {
     "fold_l_r": true,
     "strip_diacritics": true,

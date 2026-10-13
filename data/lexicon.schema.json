@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/niyonkuruelisa/kinyarwanda_moderation/data/lexicon.schema.json",
   "title": "Kinyarwanda moderation lexicon",
-  "description": "Schema for the JSON files this library loads. Two shapes are accepted: the structured form used by data/rw_lexicon.json (categories with severities and actions), and a flat array of terms such as data/rw_hate_speech.json. Contributors add words here; the library loads and compiles them at runtime.",
+  "description": "Schema for the JSON files this library loads. Two shapes are accepted: the structured form used by data/rw_lexicon.json (categories with severities and actions), and a flat array of terms such as data/rw_hate_speech.json. Contributors add words here; the library loads and compiles them at runtime. Read data/README.md before you use or quote the bundled lists.",
   "oneOf": [
     { "$ref": "#/definitions/structured" },
     { "$ref": "#/definitions/flat" }
