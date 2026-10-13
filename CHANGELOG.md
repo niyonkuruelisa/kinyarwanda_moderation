@@ -17,6 +17,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A disclaimer in the README covering the bundled word lists: they are detection
+  patterns, not the maintainers' opinions, verdicts about any group, or a
+  definition of the language.
 - The doubled-letter, augment-drop and phrase-gluing rules are now declared in
   `data/lexicon.schema.json`, and the normalizer documents all seven rules.
 

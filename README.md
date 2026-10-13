@@ -12,6 +12,10 @@ Kinyarwanda. This library is built the other way around: the normalization
 pipeline, the lexicon format and the matcher are all shaped by how Kinyarwanda
 is actually written online. It has **zero runtime dependencies**.
 
+The bundled word lists are detection patterns and nothing more. Read
+[the disclaimer](#a-disclaimer-about-the-word-lists) before you use or quote
+them.
+
 ```elixir
 KinyarwandaModeration.toxic?("some text")
 #=> true | false
@@ -87,6 +91,45 @@ graph LR
   E[JSON lexicon] --> F[Normalizer] --> G[Token sequences] --> D
   D --> H["%Result{action, severity, matches}"]
 ```
+
+---
+
+## A disclaimer about the word lists
+
+> [!CAUTION]
+> **Read this before you use the bundled data.**
+>
+> This repository contains Kinyarwanda words and phrases that are, in
+> themselves, abusive. They are here as **detection patterns and nothing else**.
+>
+> **The list is not our opinion.** Including a term means "this string has been
+> observed in abusive Kinyarwanda text", not that we endorse writing it, agree
+> with what it expresses, or believe anything it implies. A lexicon entry is a
+> mapping from spelling to a moderation decision. That is the whole of it.
+>
+> **The list is not a verdict about any person, group or community.** Many of
+> these strings are ordinary Kinyarwanda words, names, place names and everyday
+> parts of speech. Several carry meaning that changes entirely with context, and
+> the same word can be affectionate, neutral or cruel depending on who is
+> speaking and why. This library does not and cannot tell those apart. It reports
+> that a string matched, and hands the decision to a human. Treat its output as a
+> signal to look closer, never as a finding.
+>
+> **The list is not a substitute for judgement.** It is incomplete, it will
+> contain items you disagree with, and it will miss things it should catch. It is
+> a starting point that you are expected to review, edit and own before you rely
+> on it. An automated filter should never be the only thing standing between a
+> person and their account, their post or their reputation.
+>
+> **Do not copy this list into anything that presents it as a definition of what
+> Kinyarwanda is, or of who Rwandans are.** Quoting these terms in documentation,
+> training data, papers or datasets, or treating the filter's decisions as
+> labels, misses what they are for and will misrepresent both the language and
+> the people who speak it.
+>
+> If you maintain this list: add a term when it is genuinely used to harm people,
+> not merely because it is crude. If you think an entry should not be here, that
+> is a useful bug report, not an offence.
 
 ---
 
